@@ -23,42 +23,41 @@ resume with a Groq LLM, and filters out role mismatches before you ever see them
 
 ---
 
-## Quick start
+## Quick Start
 
-### 1. Run setup wizard
+**Step 1: Clone and install**
+```bash
+git clone https://github.com/harshgarg020695-glitch/job-finder-ai
+cd job-finder-ai
+pip install -r requirements.txt
+```
 
+**Step 2: Guided setup** (gets your API keys, validates them, runs a test search)
 ```bash
 python setup.py
 ```
 
-This installs dependencies, walks you through API keys, validates each key
-with a live round-trip, and ends with a test search.
-
-### 2. Start the server
-
+**Step 3: Start searching**
 ```bash
-python api.py
-# Background:
-nohup python api.py > flask.log 2>&1 &
+python api.py          # starts server at localhost:8000
 ```
-
-Server opens at `http://localhost:8000`.
-
-### 3. Deep search (recommended)
-
+Then in a new terminal:
 ```bash
+# Quick search (~3 min)
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "Product Manager", "location": "Hyderabad", "resume": "paste resume text here"}'
+
+# Deep search with AI scoring (~10 min, better results)
 curl -X POST http://localhost:8000/api/deep-search \
   -H "Content-Type: application/json" \
-  -d '{
-    "keyword": "AI Implementation Manager",
-    "location": "Hyderabad, India",
-    "resume": "Paste your full resume text here…"
-  }'
+  -d '{"keyword": "Product Manager", "location": "Hyderabad", "resume": "paste resume text here"}'
 ```
 
-Returns jobs sorted by AI match score, with mismatched roles already filtered out.
-
----
+Results are returned as JSON. Save to CSV:
+```bash
+curl ... | python3 -c "import sys,json,csv; jobs=json.load(sys.stdin)['jobs']; ..."
+```---
 
 ## API keys
 
