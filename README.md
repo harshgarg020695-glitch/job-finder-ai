@@ -1,8 +1,14 @@
 # job-finder-ai
 
+[![Daily Health Check](https://github.com/harshgarg95/job-finder-ai/actions/workflows/health.yml/badge.svg)](https://github.com/harshgarg95/job-finder-ai/actions/workflows/health.yml)
+
 AI-powered job search tool for the **India market**. Searches LinkedIn, Indeed,
 and Naukri simultaneously, deduplicates results, scores every job against your
 resume with a Groq LLM, and filters out role mismatches before you ever see them.
+
+## Sample output
+
+![Sample search results showing top 10 jobs with AI scores, company names, location types, and direct apply links](docs/sample_output.png)
 
 ---
 

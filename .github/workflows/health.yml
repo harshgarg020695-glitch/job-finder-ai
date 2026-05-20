@@ -1,0 +1,41 @@
+name: Daily Health Check
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 8:30am IST daily
+  workflow_dispatch:       # allow manual trigger
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Import check
+        run: |
+          python3 -c "
+          from job_automation.aggregator import JobAggregator
+          from groq_analyzer import GroqAnalyzer
+          from job_automation.feedback import init_feedback_db
+          print('All imports OK')
+          "
+
+      - name: Scoring config check
+        run: |
+          python3 -c "
+          import json
+          config = json.load(open('scoring_config.json'))
+          print(f'scoring_config.json v{config[\"version\"]} loaded OK')
+          assert config['version'] >= 1
+          "
