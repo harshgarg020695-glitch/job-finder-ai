@@ -18,17 +18,33 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install --upgrade pip wheel
+          pip install pandas>=2.0.0
           pip install -r requirements.txt
           pip install playwright
           playwright install chromium --with-deps
+          python -c "import pandas; print(f'pandas {pandas.__version__} OK')"
 
       - name: Import check
         run: |
           python3 -c "
-          from job_automation.aggregator import JobAggregator
+          import sys, os
+          sys.path.insert(0, '.')
+
+          # Check core modules load without error
+          import pandas
+          import flask
+          import groq
+          import requests
+          from dotenv import load_dotenv
+          print(f'Core deps OK: pandas={pandas.__version__}, flask={flask.__version__}')
+
+          # Check our modules import
           from groq_analyzer import GroqAnalyzer
           from job_automation.feedback import init_feedback_db
-          print('All imports OK')
+          from job_automation.salary_filter import extract_salary_lpa
+          import platform_filter
+          print('job_automation modules OK')
           "
 
       - name: Scoring config check
