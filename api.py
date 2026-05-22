@@ -27,6 +27,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
+from version import CURRENT_VERSION
 from serper_job_finder import SerperJobFinder
 from job_fetcher import JobFetcher
 from hybrid_scorer import HybridScorer
@@ -698,6 +699,69 @@ def calibration_insights():
         return jsonify({"error": str(e)}), 500
 
 
+def check_for_updates() -> None:
+    """
+    Compare CURRENT_VERSION against the latest GitHub release tag.
+    Logs a warning if a newer version is available.
+    Never raises — always silently swallowed so startup is never blocked.
+    """
+    import requests as _req
+    try:
+        r = _req.get(
+            "https://api.github.com/repos/harshgarg95/job-finder-ai/releases/latest",
+            timeout=3,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        if r.status_code != 200:
+            return
+        latest = r.json().get("tag_name", "").lstrip("v")
+        if latest and latest != CURRENT_VERSION:
+            app_logger.warning(
+                f"[version] Update available: v{CURRENT_VERSION} → v{latest}. "
+                "Pull the latest from https://github.com/harshgarg95/job-finder-ai"
+            )
+        else:
+            app_logger.info(f"[version] Up to date (v{CURRENT_VERSION})")
+    except Exception as _ve:
+        app_logger.debug(f"[version] Update check skipped: {_ve}")
+
+
+@app.route('/api/version', methods=['GET'])
+def api_version():
+    """
+    GET /api/version
+
+    Returns current and latest version info.
+    If GitHub API is unreachable, latest is null and update_available is false.
+
+    Response:
+        {
+            "current":          "1.0.0",
+            "latest":           "1.1.0" | null,
+            "update_available": true | false
+        }
+    """
+    import requests as _req
+    latest = None
+    try:
+        r = _req.get(
+            "https://api.github.com/repos/harshgarg95/job-finder-ai/releases/latest",
+            timeout=3,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        if r.status_code == 200:
+            latest = r.json().get("tag_name", "").lstrip("v") or None
+    except Exception:
+        pass  # GitHub unreachable — update_available stays False
+
+    update_available = bool(latest and latest != CURRENT_VERSION)
+    return jsonify({
+        "current":          CURRENT_VERSION,
+        "latest":           latest,
+        "update_available": update_available,
+    })
+
+
 @app.route('/api/reset-seen', methods=['POST'])
 def reset_seen():
     """Delete seen_jobs.json so the next search returns all results fresh."""
@@ -717,4 +781,5 @@ def reset_seen():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8000))
     app_logger.info(f"Starting Flask on port {port}")
+    check_for_updates()
     app.run(host='0.0.0.0', port=port, debug=True)
