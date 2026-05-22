@@ -2,9 +2,19 @@
 
 [![Daily Health Check](https://github.com/harshgarg95/job-finder-ai/actions/workflows/health.yml/badge.svg)](https://github.com/harshgarg95/job-finder-ai/actions/workflows/health.yml)
 
-AI-powered job search tool for the **India market**. Searches LinkedIn, Indeed,
-and Naukri simultaneously, deduplicates results, scores every job against your
-resume with a Groq LLM, and filters out role mismatches before you ever see them.
+> **The only open-source AI job search tool built for the Indian market.**
+> Most tools are built for US markets — they miss Naukri, Instahyre, Hirist.
+> Upload your resume, get AI-scored results from LinkedIn, Indeed, and Indian
+> job boards. Free forever. Runs on your machine.
+
+| Feature | This tool | Simplify | Manus AI | Teal |
+|---|---|---|---|---|
+| India platforms (Naukri / Google Jobs India) | ✅ | ❌ | ❌ | ❌ |
+| Open-source | ✅ | ❌ | ❌ | ❌ |
+| AI resume scoring | ✅ | ✅ | ✅ | ✅ |
+| Free forever | ✅ | Freemium | Freemium | Freemium |
+| Self-hostable | ✅ | ❌ | ❌ | ❌ |
+| Runs locally (your data stays on your machine) | ✅ | ❌ | ❌ | ❌ |
 
 ## Sample output
 
