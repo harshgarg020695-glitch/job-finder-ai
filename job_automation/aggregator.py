@@ -344,7 +344,7 @@ _CLEAN_FIELDS = [
     "source", "posted", "freshness_label",
     "url", "description", "description_quality", "description_word_count",
     "description_quality_note", "scored_by", "role_mismatch_reason",
-    "domain_match",
+    "domain_match", "risk_flags",
     "salary_min_lpa", "salary_max_lpa", "salary_label", "salary_fit",
 ]
 
@@ -602,7 +602,7 @@ class JobAggregator:
         resume_text: str,
         existing_scorer=None,
         start_time: float | None = None,
-        candidate_profile: dict | None = None,
+        candidate_profile: Optional[dict] = None,
     ):
         """
         Score jobs with primary 8b model in batches of 5 (one Groq call per batch).
@@ -731,7 +731,7 @@ class JobAggregator:
         window_used = WINDOWS[-1][1]
 
         # ── Extract candidate profile ONCE before scoring windows ──────────
-        candidate_profile: dict | None = None
+        candidate_profile: Optional[dict] = None
         if resume_text:
             try:
                 from groq_analyzer import GroqAnalyzer

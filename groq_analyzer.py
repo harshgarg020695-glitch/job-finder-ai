@@ -15,6 +15,7 @@ Rate-limit handling:
 import os
 import json
 import time
+from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -321,11 +322,27 @@ Return ONLY valid JSON, no other text:
             print(f"[Profile] Extraction failed: {e} — using resume text directly")
             return {"raw_resume": resume_text[:1500]}
 
+    def _truncate_description(self, job: dict) -> str:
+        """
+        Source-aware description truncation.
+        LinkedIn/Indeed return full JDs (1 000–2 500 words) — use up to 2 500 chars.
+        Google Jobs India / Naukri return snippets — 400 chars is the realistic ceiling.
+        Everything else gets 1 000 chars as a safe middle ground.
+        """
+        desc   = (job.get("description") or "").replace("\n", " ").strip()
+        source = (job.get("source") or "").lower()
+        if source in ("linkedin", "indeed"):
+            return desc[:2500]
+        elif source in ("google_jobs_india", "naukri"):
+            return desc[:400]
+        else:
+            return desc[:1000]
+
     def score_batch(
         self,
         jobs: list[dict],
         resume_text: str,
-        candidate_profile: dict | None = None,
+        candidate_profile: Optional[dict] = None,
     ) -> list[dict]:
         """
         Score up to 5 jobs in a single Groq call, with automatic key rotation.
@@ -370,12 +387,10 @@ Return ONLY valid JSON, no other text:
                 f"Level: {candidate_profile.get('level', 'Unknown')} | "
                 f"{candidate_profile.get('years_experience', '?')} years experience\n"
                 f"Domain: {candidate_profile.get('primary_domain', 'Unknown')}\n"
-                f"Core skills: {', '.join(candidate_profile.get('core_skills', [])[:6])}\n\n"
-                f"SCORE 70+ ONLY IF job description contains:\n"
-                f"{strong if strong else '  (infer from resume)'}\n\n"
-                f"SCORE 50 OR BELOW IF job description contains:\n"
-                f"{weak if weak else '  (infer from resume)'}\n\n"
-                f"SCORE 35 OR BELOW IF job title contains: {avoid if avoid else '(none)'}"
+                f"Core skills: {', '.join(candidate_profile.get('core_skills', [])[:6])}\n"
+                f"Strong-match signals (from profile): {', '.join(strong_signals[:5]) if strong_signals else 'see resume'}\n"
+                f"Weak-match signals (from profile): {', '.join(weak_signals[:3]) if weak_signals else 'none'}\n"
+                f"Avoid if title contains: {avoid if avoid else 'none'}"
             )
             print(
                 f"[Score Batch] Using profile: {candidate_profile.get('title','?')} | "
@@ -390,7 +405,7 @@ Return ONLY valid JSON, no other text:
         # ── Build job blocks ───────────────────────────────────────────────
         job_blocks: list[str] = []
         for i, job in enumerate(jobs, 1):
-            desc = (job.get("description") or "")[:400].replace("\n", " ")
+            desc = self._truncate_description(job)
             job_blocks.append(
                 f"[JOB {i}]\n"
                 f"Title: {job.get('title', '')}\n"
@@ -402,18 +417,27 @@ Return ONLY valid JSON, no other text:
             "You are a precise job-fit evaluator.\n"
             "Score each job for this candidate. Read carefully.\n\n"
             f"{profile_section}\n\n"
-            "SCORING RULES:\n"
-            "- Score 0-100 based on how well the job matches the candidate's "
-            "specific domain, level, and skills\n"
-            "- 'Implementation' alone is not enough — the TYPE of implementation must match\n"
-            "- A project manager in the wrong industry scores low even if the title fits\n"
-            "- If the JD has no description of actual work content → score 55 max\n\n"
+            "SCORING RULES — READ CAREFULLY:\n"
+            "- Score based on evidence you can SEE in the job description text\n"
+            "- Do NOT score 75+ unless the JD text explicitly states requirements "
+            "that this candidate can demonstrably meet\n"
+            "- Do NOT score 75+ based on job title alone or keyword presence\n"
+            "- For each job, ask: 'Does the description show what this role actually "
+            "does day-to-day, and does it match the candidate's background?'\n"
+            "- If the description is short (<100 words) and contains no requirements, "
+            "score maximum 65 and add \"short_description_unreliable\" to risk_flags\n"
+            "- If requirements are listed but the candidate clearly lacks them "
+            "(e.g. '10 years SAP' when candidate has no SAP), score ≤50\n"
+            "- Score 75+ only when: domain matches, level matches, AND visible "
+            "requirements align with the candidate's stated experience\n"
+            "- risk_flags must be a JSON array; use [\"clear\"] when no issues\n\n"
             f"JOBS TO SCORE:\n" + "\n".join(job_blocks) + "\n\n"
             f"Return ONLY a JSON array with exactly {len(jobs)} objects, no other text:\n"
             "[\n"
             '  {"job_index": 1, "score": 72, '
-            '"score_reason": "one specific sentence", '
-            '"domain_match": "strong|moderate|weak|unknown"},\n'
+            '"score_reason": "specific one-sentence reason citing JD text", '
+            '"domain_match": "strong|moderate|weak|unknown", '
+            '"risk_flags": ["clear"]},\n'
             "  ...\n"
             "]\n"
         )
@@ -434,7 +458,7 @@ Return ONLY valid JSON, no other text:
                 response = client.chat.completions.create(
                     model=self.primary_model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=500,
+                    max_tokens=640,
                     temperature=0.1,
                 )
 
@@ -463,6 +487,7 @@ Return ONLY valid JSON, no other text:
                         jobs[idx]["score_reason"]       = result.get("score_reason", "")
                         jobs[idx]["domain_match"]       = result.get("domain_match", "unknown")
                         jobs[idx]["scored_by"]          = "groq_ai"
+                        jobs[idx]["risk_flags"]         = result.get("risk_flags", ["clear"])
                         jobs[idx].setdefault("role_mismatch_reason", "")
 
                 self.ai_scored_count += len(jobs)
@@ -497,7 +522,7 @@ Return ONLY valid JSON, no other text:
         return jobs
 
     def analyze_job_match(self, resume: str, job_description: str,
-                          max_retries: int = 2, model: str | None = None) -> dict:
+                          max_retries: int = 2, model: Optional[str] = None) -> dict:
         """
         Score a resume ↔ job-description pair for domain fit.
         Used by HybridScorer (premium rescore path).
@@ -561,7 +586,7 @@ Return ONLY valid JSON, no other text:
 
     def _call_model(self, resume: str, job_description: str,
                     model_name: str, max_retries: int,
-                    client=None) -> dict | None:
+                    client=None) -> Optional[dict]:
         """client is injected by analyze_job_match for key-rotation support."""
         prompt = f"""Analyze this job match for a career switcher.
 
