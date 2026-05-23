@@ -313,6 +313,79 @@
     .empty-state p   { font-size: 14px; }
     .empty-sub       { font-size: 12px; color: var(--text-light); margin-top: 5px; }
 
+    /* ── My Activity panel ── */
+    #activity-panel { margin-top: 20px; }
+    .activity-toggle {
+      width: 100%; padding: 13px 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); cursor: pointer; font-family: inherit;
+      font-size: 13px; font-weight: 700; color: var(--text-muted);
+      text-align: left; display: flex; align-items: center; gap: 8px;
+      letter-spacing: .4px; text-transform: uppercase;
+      transition: background .15s;
+    }
+    .activity-toggle:hover { background: var(--surface-2); }
+    .activity-toggle .chevron { margin-left: auto; transition: transform .2s; font-size: 11px; }
+    .activity-toggle.open .chevron { transform: rotate(180deg); }
+    #activity-body {
+      display: none;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .stat-cell {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+    }
+    .stat-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--text); margin-top: 4px; }
+    .stat-sub   { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+    .stats-section-title {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .5px;
+      margin: 16px 0 8px;
+    }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag {
+      font-size: 12px; padding: 3px 10px; border-radius: 12px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      color: var(--text-muted); font-weight: 500;
+    }
+    .tag.applied { background: var(--score-a-bg); border-color: var(--score-a); color: var(--score-a); }
+    .tag.skipped { background: var(--err-bg); border-color: var(--err-border); color: #991b1b; }
+    .score-dist-row {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;
+    }
+    .score-dist-cell {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 14px; flex: 1; min-width: 140px;
+    }
+    .score-dist-cell .sdc-label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+    .score-dist-cell .sdc-mean  { font-size: 18px; font-weight: 700; margin-top: 3px; }
+    .score-dist-cell .sdc-range { font-size: 11px; color: var(--text-light); }
+    .activity-footer {
+      margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; align-items: center;
+    }
+    .btn-export-hist {
+      padding: 6px 13px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); font-size: 12px; font-weight: 600;
+      cursor: pointer; color: var(--text-muted); font-family: inherit;
+      transition: all .15s;
+    }
+    .btn-export-hist:hover { border-color: var(--primary); color: var(--primary); }
+    #activity-status { font-size: 12px; color: var(--text-light); }
+
     @media (max-width: 680px) {
       .form-row { flex-direction: column; }
       td:nth-child(4), th:nth-child(4),
@@ -442,6 +515,23 @@
           </td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- My Activity panel -->
+  <div id="activity-panel">
+    <button class="activity-toggle" id="activity-toggle" onclick="toggleActivity()">
+      📊 My Activity
+      <span class="chevron">▼</span>
+    </button>
+    <div id="activity-body">
+      <div id="activity-content">
+        <div style="color:var(--text-muted);font-size:13px;">Loading…</div>
+      </div>
+      <div class="activity-footer">
+        <button class="btn-export-hist" onclick="window.location='/api/export-stats'">⬇ Export History CSV</button>
+        <span id="activity-status"></span>
+      </div>
     </div>
   </div>
 
@@ -808,6 +898,7 @@ async function recordAction(i, action) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         run_id: runId, url: j.url||'', title: j.title||'',
+        company: j.company||'',
         score: j.score||0, domain_match: j.domain_match||'unknown',
         source: j.source||'', posted: j.posted||'', action,
       }),
@@ -838,6 +929,88 @@ function exportCSV() {
 /* ------------------------------------------------------------------ */
 const qs  = s => document.querySelector(s);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+/* ------------------------------------------------------------------ */
+/* My Activity panel                                                   */
+/* ------------------------------------------------------------------ */
+let activityLoaded = false;
+
+function toggleActivity() {
+  const toggle = qs('#activity-toggle');
+  const body   = qs('#activity-body');
+  const open   = toggle.classList.toggle('open');
+  body.style.display = open ? 'block' : 'none';
+  if (open && !activityLoaded) loadActivity();
+}
+
+async function loadActivity() {
+  const content = qs('#activity-content');
+  const status  = qs('#activity-status');
+  content.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Loading…</div>';
+  try {
+    const r = await fetch('/api/my-stats');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    activityLoaded = true;
+    status.textContent = 'Updated just now';
+    renderActivity(d);
+  } catch (e) {
+    content.innerHTML = `<div class="alert error">Could not load stats: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderActivity(d) {
+  const applyPct = d.apply_rate != null ? (d.apply_rate * 100).toFixed(1) + '%' : '—';
+
+  // Top numbers grid
+  const gridItems = [
+    { label: 'Searches run',    value: d.searches_run ?? '—',   sub: d.last_search ? 'last: ' + d.last_search : '' },
+    { label: 'Jobs actioned',   value: d.total_jobs_seen ?? '—', sub: '' },
+    { label: 'Applied',         value: d.total_applied ?? '—',   sub: '' },
+    { label: 'Skipped',         value: d.total_skipped ?? '—',   sub: '' },
+    { label: 'Apply rate',      value: applyPct,                  sub: 'applied ÷ (applied+skipped)' },
+  ];
+
+  const gridHtml = `<div class="stats-grid">${gridItems.map(g => `
+    <div class="stat-cell">
+      <div class="stat-label">${g.label}</div>
+      <div class="stat-value">${g.value}</div>
+      ${g.sub ? `<div class="stat-sub">${esc(g.sub)}</div>` : ''}
+    </div>`).join('')}</div>`;
+
+  // Score distribution
+  const dist = d.score_distribution || {};
+  const distHtml = Object.keys(dist).length ? `
+    <div class="stats-section-title">Score distribution by action</div>
+    <div class="score-dist-row">
+      ${Object.entries(dist).map(([action, s]) => `
+        <div class="score-dist-cell">
+          <div class="sdc-label">${action}</div>
+          <div class="sdc-mean" style="color:${action==='applied'?'var(--score-a)':'var(--score-c)'}">${s.mean}%</div>
+          <div class="sdc-range">min ${s.min}% · max ${s.max}% · ${s.count} jobs</div>
+        </div>`).join('')}
+    </div>` : '';
+
+  // Top companies applied to
+  const companies = d.top_applied_companies || [];
+  const companiesHtml = companies.length ? `
+    <div class="stats-section-title">Top companies you applied to</div>
+    <div class="tag-list">${companies.map(c =>
+      `<span class="tag applied">${esc(c)}</span>`).join('')}</div>` : '';
+
+  // Top skipped title patterns
+  const skipped = d.top_skipped_title_patterns || [];
+  const skippedHtml = skipped.length ? `
+    <div class="stats-section-title">Words appearing most in jobs you skipped</div>
+    <div class="tag-list">${skipped.map(w =>
+      `<span class="tag skipped">${esc(w)}</span>`).join('')}</div>
+    <div style="font-size:11px;color:var(--text-light);margin-top:6px;">
+      These signals can help tune scoring_config.json weak_signals.
+    </div>` : '';
+
+  qs('#activity-content').innerHTML = gridHtml + distHtml + companiesHtml + skippedHtml
+    || '<div style="color:var(--text-muted);font-size:13px;">No activity recorded yet. Use the Apply / Skip buttons after a search.</div>';
+}
 </script>
 </body>
 </html>

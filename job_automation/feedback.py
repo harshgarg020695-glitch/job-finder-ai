@@ -61,8 +61,17 @@ def init_feedback_db() -> None:
         source            TEXT,
         days_since_posted INTEGER,
         action            TEXT,
+        job_title         TEXT,
+        company           TEXT,
         FOREIGN KEY (run_id) REFERENCES search_runs(id)
     )""")
+
+    # Safe migration — adds columns to existing DBs without data loss
+    for col, coltype in [("job_title", "TEXT"), ("company", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE job_actions ADD COLUMN {col} {coltype}")
+        except Exception:
+            pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS score_calibration (
@@ -168,8 +177,9 @@ def record_job_action(run_id: int, job: dict, action: str) -> None:
     c.execute("""
     INSERT INTO job_actions (
         timestamp, run_id, url_hash, title_pattern,
-        score, domain_match, source, days_since_posted, action
-    ) VALUES (?,?,?,?,?,?,?,?,?)
+        score, domain_match, source, days_since_posted, action,
+        job_title, company
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
     """, (
         datetime.now().isoformat(),
         run_id,
@@ -180,6 +190,8 @@ def record_job_action(run_id: int, job: dict, action: str) -> None:
         job.get("source", "unknown"),
         days_old,
         action,
+        (job.get("title") or "")[:200],
+        (job.get("company") or "")[:100],
     ))
     conn.commit()
     conn.close()
@@ -264,6 +276,128 @@ def get_calibration_insights() -> dict:
         "domain_match_accuracy": domain_accuracy,
         "total_feedback_points": total_points,
     }
+
+
+def get_my_stats() -> dict:
+    """
+    Aggregate user behaviour stats across all recorded job actions.
+
+    Returns a summary suitable for the /api/my-stats endpoint:
+      total_jobs_seen          — total action records
+      total_applied            — applied actions
+      total_skipped            — skipped actions
+      apply_rate               — applied / (applied + skipped)
+      top_applied_companies    — top 5 companies by applied count
+      top_skipped_title_patterns — top 5 words in skipped job titles
+      score_distribution       — mean/min/max per action
+      searches_run             — total search_runs rows
+      last_search              — ISO date of most recent run
+    """
+    init_feedback_db()
+    conn = sqlite3.connect(FEEDBACK_DB)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # ── Totals ────────────────────────────────────────────────────────────
+    c.execute("SELECT COUNT(*) FROM job_actions")
+    total_seen = c.fetchone()[0]
+
+    c.execute("SELECT COUNT(*) FROM job_actions WHERE action = 'applied'")
+    total_applied = c.fetchone()[0]
+
+    c.execute("SELECT COUNT(*) FROM job_actions WHERE action = 'skipped'")
+    total_skipped = c.fetchone()[0]
+
+    decisive = total_applied + total_skipped
+    apply_rate = round(total_applied / decisive, 3) if decisive else 0.0
+
+    # ── Top applied companies ─────────────────────────────────────────────
+    c.execute("""
+        SELECT company, COUNT(*) AS cnt
+        FROM job_actions
+        WHERE action = 'applied' AND company IS NOT NULL AND company != ''
+        GROUP BY company
+        ORDER BY cnt DESC
+        LIMIT 5
+    """)
+    top_applied_companies = [r["company"] for r in c.fetchall()]
+
+    # ── Top words in skipped job titles ──────────────────────────────────
+    # Tokenise all skipped titles → frequency-rank meaningful words
+    _STOPWORDS = {
+        "a","an","the","and","or","of","in","for","to","at","on","with","is","are",
+        "be","by","as","it","we","you","this","that","–","—","-","&","(",")","/",
+        "i","ii","iii","iv","us","uk","india","hyderabad","bangalore","remote",
+        "level","senior","junior","lead","associate","mid","role","position","job",
+        "full","time","part","contract","manager","management",
+    }
+    c.execute("""
+        SELECT job_title FROM job_actions
+        WHERE action = 'skipped' AND job_title IS NOT NULL AND job_title != ''
+    """)
+    word_freq: dict = {}
+    for row in c.fetchall():
+        for word in row["job_title"].replace("-", " ").replace("/", " ").split():
+            w = word.strip("(),.:").lower()
+            if len(w) >= 3 and w not in _STOPWORDS:
+                word_freq[w] = word_freq.get(w, 0) + 1
+    top_skipped = [w for w, _ in sorted(word_freq.items(), key=lambda x: -x[1])[:5]]
+
+    # ── Score distribution per action ────────────────────────────────────
+    score_dist: dict = {}
+    for action in ("applied", "skipped", "saved"):
+        c.execute("""
+            SELECT AVG(score) AS mean, MIN(score) AS mn, MAX(score) AS mx,
+                   COUNT(*) AS n
+            FROM job_actions WHERE action = ?
+        """, (action,))
+        row = c.fetchone()
+        if row and row["n"] and row["n"] > 0:
+            score_dist[action] = {
+                "mean":  round(float(row["mean"] or 0), 1),
+                "min":   round(float(row["mn"]   or 0), 1),
+                "max":   round(float(row["mx"]   or 0), 1),
+                "count": row["n"],
+            }
+
+    # ── Search run stats ──────────────────────────────────────────────────
+    c.execute("SELECT COUNT(*) FROM search_runs")
+    searches_run = c.fetchone()[0]
+
+    c.execute("SELECT MAX(timestamp) FROM search_runs")
+    last_ts = c.fetchone()[0]
+    last_search = last_ts[:10] if last_ts else None
+
+    conn.close()
+
+    return {
+        "total_jobs_seen":             total_seen,
+        "total_applied":               total_applied,
+        "total_skipped":               total_skipped,
+        "apply_rate":                  apply_rate,
+        "top_applied_companies":       top_applied_companies,
+        "top_skipped_title_patterns":  top_skipped,
+        "score_distribution":          score_dist,
+        "searches_run":                searches_run,
+        "last_search":                 last_search,
+    }
+
+
+def get_action_history() -> list:
+    """
+    Return all job_actions rows for CSV export.
+    Columns: timestamp, job_title, company, score, action, run_id
+    """
+    init_feedback_db()
+    conn = sqlite3.connect(FEEDBACK_DB)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT timestamp, job_title, company, score, action, run_id
+        FROM job_actions
+        ORDER BY timestamp DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_run_history(last_n: int = 10) -> list:

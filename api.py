@@ -10,6 +10,8 @@ Auto-detects career switching via domain analysis.
 # POST /api/parse-resume    — extract text from PDF / DOCX upload
 # POST /api/suggest-titles  — AI-suggest job titles from resume text
 # POST /api/verify-jobs     — check job URL reachability
+# GET  /api/my-stats        — aggregate user behaviour stats
+# GET  /api/export-stats    — CSV download of all job action history
 # GET  /                    — serves index.html
 # ─────────────────────────────────────────────────────────────────────────────
 """
@@ -631,16 +633,13 @@ def record_action():
     Body (JSON):
         run_id       int    required — from job._run_id (returned by deep-search)
         url          str    required — job URL (will be hashed before storage)
-        title        str    optional — job title (used for pattern extraction)
+        title        str    optional — job title
+        company      str    optional — company name
         score        float  optional
         domain_match str    optional — strong|moderate|weak|unknown
         source       str    optional — linkedin|indeed|google_jobs_india
         posted       str    optional — YYYY-MM-DD
         action       str    required — applied|skipped|saved|opened_url
-
-    Used by:
-      - Future frontend apply buttons
-      - Manual CSV review workflow
     """
     data = request.get_json(silent=True) or {}
 
@@ -657,6 +656,7 @@ def record_action():
     job = {
         "url":          data.get("url", ""),
         "title":        data.get("title", ""),
+        "company":      data.get("company", ""),
         "score":        data.get("score", 0),
         "domain_match": data.get("domain_match", "unknown"),
         "source":       data.get("source", "unknown"),
@@ -696,6 +696,80 @@ def calibration_insights():
         return jsonify({"success": True, "insights": insights})
     except Exception as e:
         app_logger.error(f"[/api/calibration-insights] {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/my-stats', methods=['GET'])
+def my_stats():
+    """
+    GET /api/my-stats
+
+    Returns aggregate user behaviour stats across all recorded job actions.
+
+    Response:
+        {
+            "total_jobs_seen":            int,
+            "total_applied":              int,
+            "total_skipped":              int,
+            "apply_rate":                 float,   // applied / (applied+skipped)
+            "top_applied_companies":      [...],   // top 5 by apply count
+            "top_skipped_title_patterns": [...],   // top 5 words in skipped titles
+            "score_distribution": {
+                "applied": {"mean": f, "min": f, "max": f, "count": n},
+                "skipped": {...}
+            },
+            "searches_run":  int,
+            "last_search":   "YYYY-MM-DD" | null
+        }
+    """
+    try:
+        from job_automation.feedback import get_my_stats
+        stats = get_my_stats()
+        return jsonify({"success": True, **stats})
+    except Exception as e:
+        app_logger.error(f"[/api/my-stats] {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/export-stats', methods=['GET'])
+def export_stats():
+    """
+    GET /api/export-stats
+
+    Downloads a CSV of all recorded job action history.
+    Columns: date, job_title, company, score, action, run_id
+    """
+    import io as _io
+    import csv as _csv
+    try:
+        from job_automation.feedback import get_action_history
+        rows = get_action_history()
+
+        buf = _io.StringIO()
+        writer = _csv.DictWriter(
+            buf,
+            fieldnames=["date", "job_title", "company", "score", "action", "run_id"],
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "date":      (r.get("timestamp") or "")[:10],
+                "job_title": r.get("job_title") or "",
+                "company":   r.get("company") or "",
+                "score":     r.get("score") or "",
+                "action":    r.get("action") or "",
+                "run_id":    r.get("run_id") or "",
+            })
+
+        from flask import make_response
+        resp = make_response(buf.getvalue())
+        resp.headers["Content-Type"]        = "text/csv; charset=utf-8"
+        resp.headers["Content-Disposition"] = "attachment; filename=job-actions-export.csv"
+        app_logger.info(f"[/api/export-stats] exported {len(rows)} rows")
+        return resp
+    except Exception as e:
+        app_logger.error(f"[/api/export-stats] {e}")
         return jsonify({"error": str(e)}), 500
 
 
